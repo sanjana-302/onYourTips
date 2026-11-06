@@ -1,0 +1,165 @@
+# Sources to ingest. Add a blog/news site by adding an `rss` entry — no code needed.
+#
+# kind:          rss | hackernews | arxiv | hf_papers | github | reddit | devto
+# content_type:  news | research_paper | project | blog_post | discussion
+# weight:        multiplier on this source's contribution to ranking signal
+# limit:         max items fetched per run
+
+defaults:
+  enabled: true
+  limit: 30
+  weight: 1.0
+
+sources:
+  # ---------------------------------------------------------------- Aggregators
+  # Daily refresh: ask for the best of the last 24 hours, not a snapshot of the front page.
+  - id: hn-front
+    name: Hacker News · Top of the day
+    kind: hackernews
+    content_type: news
+    weight: 1.2
+    limit: 50
+    params: { tags: story, endpoint: search, window_hours: 24, min_points: 50 }
+
+  - id: hn-show
+    name: Hacker News · Show HN
+    kind: hackernews
+    content_type: project
+    limit: 30
+    params: { tags: show_hn, endpoint: search, window_hours: 24, min_points: 10 }
+
+  - id: lobsters
+    name: Lobsters
+    kind: rss
+    content_type: discussion
+    params: { url: https://lobste.rs/hottest.rss }
+
+  - id: devto-ai
+    name: dev.to · #ai
+    kind: devto
+    content_type: blog_post
+    weight: 0.6
+    limit: 20
+    params: { tag: ai, top_days: 1 }
+
+  # ---------------------------------------------------------------- Research
+  - id: hf-papers
+    name: Hugging Face · Daily Papers
+    kind: hf_papers
+    content_type: research_paper
+    weight: 1.2
+
+  - id: arxiv-ai
+    name: arXiv · cs.AI / cs.LG / cs.CL
+    kind: arxiv
+    content_type: research_paper
+    weight: 0.5
+    limit: 50
+    params: { categories: [cs.AI, cs.LG, cs.CL] }
+
+  # ---------------------------------------------------------------- Projects
+  - id: github-new-hot
+    name: GitHub · New & fast-rising repos
+    kind: github
+    content_type: project
+    params: { created_within_days: 7, min_stars: 200 }
+
+  - id: github-new-llm
+    name: GitHub · New LLM repos
+    kind: github
+    content_type: project
+    params: { created_within_days: 7, min_stars: 30, topic: llm }
+
+  # ---------------------------------------------------------------- Communities
+  - id: reddit-ml
+    name: r/MachineLearning
+    kind: reddit
+    content_type: discussion
+    limit: 25
+    params: { subreddit: MachineLearning, time: day }
+
+  - id: reddit-localllama
+    name: r/LocalLLaMA
+    kind: reddit
+    content_type: discussion
+    limit: 25
+    params: { subreddit: LocalLLaMA, time: day }
+
+  # ---------------------------------------------------------------- AI labs & blogs
+  # RSS items carry no engagement data, so official sources get a higher weight.
+  - id: openai-news
+    name: OpenAI News
+    kind: rss
+    content_type: news
+    weight: 3.0
+    limit: 15
+    params: { url: https://openai.com/news/rss.xml }
+
+  - id: deepmind-blog
+    name: Google DeepMind Blog
+    kind: rss
+    content_type: news
+    weight: 3.0
+    limit: 15
+    params: { url: https://deepmind.google/blog/rss.xml }
+
+  - id: google-research
+    name: Google Research Blog
+    kind: rss
+    content_type: blog_post
+    weight: 2.0
+    limit: 15
+    params: { url: https://research.google/blog/rss/ }
+
+  - id: huggingface-blog
+    name: Hugging Face Blog
+    kind: rss
+    content_type: blog_post
+    weight: 2.0
+    limit: 15
+    params: { url: https://huggingface.co/blog/feed.xml }
+
+  - id: simonw
+    name: Simon Willison's Weblog
+    kind: rss
+    content_type: blog_post
+    weight: 2.0
+    limit: 15
+    params: { url: https://simonwillison.net/atom/everything/ }
+
+  - id: github-blog
+    name: The GitHub Blog
+    kind: rss
+    content_type: blog_post
+    weight: 1.5
+    limit: 15
+    params: { url: https://github.blog/feed/ }
+
+  # ---------------------------------------------------------------- Tech news
+  - id: techcrunch-ai
+    name: TechCrunch · AI
+    kind: rss
+    content_type: news
+    weight: 1.5
+    params: { url: https://techcrunch.com/category/artificial-intelligence/feed/ }
+
+  - id: verge-ai
+    name: The Verge · AI
+    kind: rss
+    content_type: news
+    weight: 1.5
+    params: { url: https://www.theverge.com/rss/ai-artificial-intelligence/index.xml }
+
+  - id: mit-tr-ai
+    name: MIT Technology Review · AI
+    kind: rss
+    content_type: news
+    weight: 2.0
+    params: { url: https://www.technologyreview.com/topic/artificial-intelligence/feed }
+
+  - id: ars-technica
+    name: Ars Technica
+    kind: rss
+    content_type: news
+    weight: 1.2
+    params: { url: https://feeds.arstechnica.com/arstechnica/index }

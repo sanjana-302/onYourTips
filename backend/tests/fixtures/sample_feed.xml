@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Sample AI Blog</title>
+    <link>https://example.com</link>
+    <item>
+      <title>Introducing a new open-weight LLM for coding agents</title>
+      <link>https://example.com/blog/new-llm?utm_source=rss&amp;utm_medium=feed</link>
+      <guid>https://example.com/blog/new-llm</guid>
+      <pubDate>Sat, 31 Oct 2026 15:00:00 GMT</pubDate>
+      <description><![CDATA[<p>We release <b>Model X</b>, a large language model tuned for tool use.</p>]]></description>
+      <category>AI</category>
+    </item>
+    <item>
+      <title>Kubernetes 2.0 released</title>
+      <link>https://example.com/blog/k8s-2</link>
+      <pubDate>Fri, 30 Oct 2026 09:30:00 GMT</pubDate>
+      <description>Big changes for container orchestration.</description>
+    </item>
+    <item>
+      <title></title>
+      <link>https://example.com/blog/untitled</link>
+    </item>
+  </channel>
+</rss>

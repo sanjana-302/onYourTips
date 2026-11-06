@@ -1,0 +1,11 @@
+# Which Hugging Face tokenizer gives a model's exact token counts (services/tokens.py).
+#
+# The tokenizer file (tokenizer.json) is downloaded once and cached in ~/.cache/huggingface.
+# It's the same vocabulary the model uses in Ollama, so counts match without calling the model.
+# Meta's own repos need a Hugging Face login, so these point at public copies of the same file.
+#
+# Lookup: the exact model name, then the part before ":" (llama3.2:1b -> llama3.2).
+# Models not listed fall back to characters / chars-per-token (calibrate with
+# `oyt tokens calibrate -m <model>`). Check accuracy with `oyt tokens calibrate` + `oyt tokens`.
+models:
+  llama3.2: unsloth/Llama-3.2-3B-Instruct

@@ -1,0 +1,78 @@
+# Deterministic topic taxonomy. Keywords match case-insensitively on word boundaries.
+# Prefix with "re:" for a raw regex. Title or source-tag hit = 2 pts, each summary hit = 1 pt.
+# A topic is assigned at >= min_score.
+min_score: 2
+
+topics:
+  llms:
+    label: LLMs & Foundation Models
+    keywords: [llm, llms, large language model, foundation model, foundation models,
+               language model, language models, slm, slms, gpt, chatgpt,
+               claude, gemini, llama, mistral, qwen, deepseek, "re:\\bgpt-?\\d", transformer,
+               fine-tuning, fine-tune, finetuning, rlhf, inference, tokenizer, context window,
+               open-weight, open weights]
+  agents:
+    label: AI Agents
+    keywords: [agent, agents, agentic, ai agent, ai agents, tool use, function calling, mcp,
+               model context protocol, autonomous, multi-agent, computer use, browser agent]
+  rag-retrieval:
+    label: RAG, Search & Embeddings
+    keywords: [rag, retrieval, retrieval-augmented, embedding, embeddings, vector database,
+               vector search, semantic search, reranker, reranking]
+  ai-coding:
+    label: AI for Coding
+    keywords: [coding assistant, code generation, copilot, cursor, claude code, codex,
+               ai coding, vibe coding, code review, swe-bench, coding agent]
+  computer-vision:
+    label: Vision & Multimodal
+    keywords: [computer vision, image generation, diffusion, text-to-image, text-to-video,
+               video generation, multimodal, vision language, vlm, segmentation, object detection,
+               stable diffusion, ocr]
+  speech-audio:
+    label: Speech & Audio
+    keywords: [speech, text-to-speech, tts, speech recognition, asr, voice, audio, whisper]
+  robotics:
+    label: Robotics & Embodied AI
+    keywords: [robot, robots, robotics, humanoid, embodied, autonomous driving, self-driving,
+               drone, drones]
+  ml-research:
+    label: ML Research
+    keywords: [reinforcement learning, neural network, deep learning, benchmark, dataset,
+               training, pretraining, reasoning, interpretability, mixture of experts, moe,
+               distillation, quantization, scaling law, optimizer, cs.lg, cs.ai, cs.cl, cs.cv]
+  ai-safety-policy:
+    label: AI Safety, Ethics & Policy
+    keywords: [ai safety, alignment, ai regulation, ai act, regulation, policy, copyright,
+               lawsuit, ethics, deepfake, misinformation, jailbreak, red teaming, guardrails]
+  ai-hardware:
+    label: Chips & AI Infrastructure
+    keywords: [gpu, gpus, nvidia, tpu, amd, chip, chips, semiconductor, data center,
+               datacenter, cuda, accelerator, h100, b200, compute cluster]
+  devtools:
+    label: Developer Tools
+    keywords: [developer tools, devtools, cli, ide, vscode, vs code, neovim, terminal, debugger,
+               git, github, compiler, linter, package manager, sdk, api]
+  programming-languages:
+    label: Programming Languages
+    keywords: [rust, python, golang, typescript, javascript, zig, c++, java, kotlin, swift,
+               haskell, elixir, wasm, webassembly, "re:\\bgo\\s+1\\.\\d+"]
+  web-dev:
+    label: Web Development
+    keywords: [react, next.js, nextjs, vue, svelte, frontend, css, html, browser, web app,
+               node.js, nodejs, deno, bun, tailwind]
+  cloud-infra:
+    label: Cloud, DevOps & Infra
+    keywords: [kubernetes, k8s, docker, container, serverless, aws, azure, gcp, cloud,
+               terraform, devops, observability, linux, postgres, postgresql, database, sqlite]
+  security:
+    label: Security & Privacy
+    keywords: [security, vulnerability, cve, exploit, malware, ransomware, breach, privacy,
+               encryption, zero-day, phishing, supply chain attack, authentication]
+  open-source:
+    label: Open Source
+    keywords: [open source, open-source, oss, mit license, apache 2.0, self-hosted,
+               self-hosting, show_hn]
+  startups-business:
+    label: Startups & Business
+    keywords: [startup, startups, funding, raises, series a, series b, seed round, valuation,
+               acquisition, acquires, ipo, layoffs, revenue, investors]

@@ -1,0 +1,19 @@
+# Prices in USD per 1 million tokens, used by the LLM gateway to compute and store the cost of
+# every call (ADR 0003). Cost is stored at call time, so changing a price never rewrites history:
+# bump `version` whenever you edit this file.
+#
+# Lookup order: providers.<provider>.<model>, then providers.<provider>."*". A model with no
+# entry is recorded with cost 0 and pricing_version "unpriced" (and a warning is logged).
+version: "2026-11-06"
+
+providers:
+  # Local models run on your own computer: no per-token price.
+  # (The real cost is your laptop's time and electricity; the ledger records time per call.)
+  ollama:
+    "*": { input: 0, output: 0 }
+
+  # Paid providers: copy current prices from the provider's pricing page before using them.
+  # anthropic:
+  #   <model-name>: { input: 0.00, output: 0.00, cache_read: 0.00, cache_write: 0.00 }
+  # openai:
+  #   <model-name>: { input: 0.00, output: 0.00, cache_read: 0.00 }
