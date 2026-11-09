@@ -5,6 +5,8 @@
                   + retry yesterday's transient failures; give up after 2 failed attempts
     3. retag      re-run the keyword tagger on title + summary + the start of the full text
        tokens     estimate how many tokens a summary of each article would use (no model)
+    4b. summarize summaries with citations for every new story, best first, until the
+                  morning deadline (summary_deadline, 08:30). Local model; see ADR 0006.
     4. alerts     source failing 2 runs in a row, pages given up on, pipeline errors
                   (stored in `alerts`, shown in the app, and a macOS notification)
     5. record     one `pipeline_runs` row with per-step counts (manual runs included, so extra
@@ -41,6 +43,7 @@ from onyourtips.core.utils import is_network_error, utcnow
 from onyourtips.ingestion.pipeline import Pipeline
 from onyourtips.ingestion.sources import load_source_configs
 from onyourtips.ingestion.tagging import Tagger
+from onyourtips.llm.models import BudgetExceeded, LLMError
 from onyourtips.services.content import extract_articles
 from onyourtips.services.tokens import estimate_articles
 from onyourtips.storage import Database
@@ -59,6 +62,7 @@ class NightlyReport(BaseModel):
     extract: dict = Field(default_factory=dict)
     retag: dict = Field(default_factory=dict)
     tokens: dict = Field(default_factory=dict)
+    summaries: dict = Field(default_factory=dict)
     new_alerts: list[Alert] = Field(default_factory=list)
     error: str | None = None
 
@@ -68,6 +72,7 @@ class NightlyReport(BaseModel):
             "extract": self.extract,
             "retag": self.retag,
             "tokens": self.tokens,
+            "summaries": self.summaries,
             "new_alerts": len(self.new_alerts),
             "network_outage": self.network_outage,
         }
@@ -91,9 +96,12 @@ def run_nightly(
     extract_http: httpx.AsyncClient | None = None,
     notify=None,
     check_network=None,
+    summarize: bool | None = None,
+    llm_gateway=None,
+    clock=None,
 ) -> NightlyReport:
-    """Run the whole pipeline. HTTP clients, `notify` and `check_network` can be injected
-    for tests."""
+    """Run the whole pipeline. HTTP clients, `notify`, `check_network`, the LLM gateway and the
+    clock can be injected for tests. `summarize=None` follows settings.summary_nightly."""
     report = NightlyReport(run_id=uuid.uuid4().hex[:12], trigger=trigger, started_at=utcnow())
     db.start_pipeline_run(
         PipelineRun(
@@ -135,6 +143,8 @@ def run_nightly(
             else:
                 _resolve_network_alert(db)
             report.new_alerts += _source_alerts(settings, db)
+            if settings.summary_nightly if summarize is None else summarize:
+                problems |= _summarize(settings, db, report, since, llm_gateway, clock)
             report.status = "partial" if problems else "ok"
     except Exception as exc:  # a broken step must still leave a record and an alert
         log.exception("refresh pipeline failed")
@@ -340,6 +350,102 @@ def _source_alerts(settings, db) -> list[Alert]:
         elif streak == 0 and key in open_alerts:
             db.resolve_alert(open_alerts[key].id)  # it works again
     return new_alerts
+
+
+# ----------------------------------------------------------------------------- summarize
+
+
+def summary_deadline_at(settings: Settings, start: datetime) -> datetime:
+    """The next `summary_deadline` (local time) after `start`."""
+    local = start.astimezone()
+    hh, mm = (int(x) for x in settings.summary_deadline.split(":"))
+    target = local.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    return target if target > local else target + timedelta(days=1)
+
+
+def _summarize(settings, db, report: NightlyReport, since, gateway, clock) -> bool:
+    """Summarize new stories until done or the deadline. Returns True if there were problems."""
+    from onyourtips.enrichment.summary_prompt import SUMMARY_PROMPT_VERSION
+    from onyourtips.llm import LLMGateway
+    from onyourtips.services.summaries import summarize_article
+
+    now = clock or (lambda: datetime.now().astimezone())
+    started = now()
+    deadline = summary_deadline_at(settings, started)
+    gw = gateway or LLMGateway(settings, db)
+    model = settings.llm_model
+    stats = {
+        "candidates": 0,
+        "done": 0,
+        "failed": 0,
+        "map_reduce": 0,
+        "not_reached": 0,
+        "deadline": deadline.strftime("%H:%M"),
+        "model": model,
+    }
+
+    # Is the model there at all? One clear alert beats 500 identical failures.
+    try:
+        names = {m.name for m in gw.provider.list_models()}
+    except LLMError as exc:
+        names, problem = None, f"the model server isn't reachable ({exc})"
+    else:
+        problem = (
+            None
+            if model in names or f"{model}:latest" in names
+            else (f"model {model} isn't downloaded (ollama pull {model})")
+        )
+    if problem:
+        stats["skipped"] = problem
+        report.summaries = stats
+        alert, new = _alert(
+            db,
+            "llm_unavailable",
+            "llm",
+            f"Summaries were skipped: {problem}. Stories will be summarized at "
+            "the next refresh, or when you open them.",
+            {"run_id": report.run_id},
+        )
+        if new:
+            report.new_alerts.append(alert)
+        return True
+    for a in db.list_alerts():
+        if a.kind == "llm_unavailable":
+            db.resolve_alert(a.id)
+
+    todo = db.summary_candidates(
+        since, model, SUMMARY_PROMPT_VERSION, settings.summary_max_attempts
+    )
+    stats["candidates"] = len(todo)
+    for i, article_id in enumerate(todo):
+        if now() >= deadline:
+            stats["not_reached"] = len(todo) - i
+            break
+        try:
+            out = summarize_article(settings, db, article_id, gateway=gw, trigger="nightly")
+        except BudgetExceeded as exc:
+            stats["stopped"] = str(exc)
+            stats["not_reached"] = len(todo) - i
+            break
+        if out.done:
+            stats["done"] += 1
+            stats["map_reduce"] += out.mode == "map_reduce"
+        else:
+            stats["failed"] += 1
+    stats["minutes"] = round((now() - started).total_seconds() / 60, 1)
+    report.summaries = stats
+    if stats["not_reached"]:
+        alert, new = _alert(
+            db,
+            "summaries_unfinished",
+            "summaries",
+            f"{stats['not_reached']} stories weren't summarized before {stats['deadline']}. "
+            "They'll be done at the next refresh or when you open them.",
+            {"run_id": report.run_id, **stats},
+        )
+        if new:
+            report.new_alerts.append(alert)
+    return bool(stats["failed"] or stats["not_reached"] or stats.get("stopped"))
 
 
 def _notify_desktop(settings: Settings, report: NightlyReport) -> None:

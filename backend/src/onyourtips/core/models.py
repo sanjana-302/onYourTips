@@ -235,7 +235,9 @@ class ArticleContent(BaseModel):
 class Alert(BaseModel):
     id: int | None = None
     created_at: datetime
-    kind: str  # source_failing | extraction_gave_up | pipeline_failed | network_down
+    # source_failing | extraction_gave_up | pipeline_failed | network_down | llm_unavailable
+    # | summaries_unfinished
+    kind: str
     subject: str
     message: str
     details: dict[str, Any] = Field(default_factory=dict)

@@ -27,6 +27,10 @@ compare, full-text extraction, daily pipeline). Next: summaries with citations.
 | 10 | LLM provider | Paid API (Claude), money budgets | Local Ollama first; daily call limit is the main guard | ADR 0004 |
 | 11 | Cost estimate before a call | "≈ $0.004" shown before generating | Token counts per article first; prices later | ADR 0003, migration 0007 |
 | 23 | Token counting library | Not specified | Hugging Face `tokenizers`, not LiteLLM | migration 0008 |
+| 25 | Which stories get summaries | Selected only (digest, saved, opened) | Every new story, overnight, until 08:30 | ADR 0006 |
+| 26 | Long stories | Not designed | Map-reduce over passage chunks (cap 12, then partial) | ADR 0006 |
+| 27 | Output contract | Optional quote per key point; `topics` from the LLM | Quote always asked for; invalid citations repaired; topics stay with the tagger | ADR 0006 |
+| 28 | Evals | Citation validity first, LLM judge "later" | Four layers now: checks, golden set + your labels, LLM judge with kappa, model comparison | ADR 0006 |
 | 24 | `summaries` table | ADR 0002: `status` ok / invalid / error, unique per input | Estimated vs real cost, `summarization_done` yes/no + `description`, one row per attempt | migration 0008 |
 | 12 | What the ledger measures | Tokens and dollars | Plus speed, load time and latency, the real local costs | ADR 0004 |
 | 13 | Context size | Not specified | `num_ctx = 8192`, set on every request | ADR 0004 |
@@ -297,11 +301,69 @@ compare, full-text extraction, daily pipeline). Next: summaries with citations.
 - **Status:** the table and the code that fills it (`services/summaries.py`: `plan_summary`,
   `record_summary`) are built. The summarize feature will call them.
 
+## Summaries and evals
+
+### 25. Summaries for every story, overnight (9 Nov)
+- **Originally (ADR 0002):** summarize only selected stories (digest picks, saved, opened) to
+  control cost.
+- **Now (ADR 0006):** the nightly run summarizes every new story, highest signal first, until
+  08:30.
+- **Why:** your product reasoning. You read at about 9 AM, the refresh starts at 1 AM, and the
+  laptop is idle in between. At 5–15 s a story, ~500 stories is 1–2 hours.
+- **Cost still visible:** every attempt has estimated and real tokens and cost; `oyt summaries`
+  totals laptop minutes and projects paid-model cost.
+- **Guards:**
+  - the 08:30 deadline (`summaries_unfinished` alert)
+  - a model availability check (`llm_unavailable`)
+  - at most 2 failures per text, prompt and model
+- **The Refresh button doesn't summarize:** it would spin for an hour. Stories without a summary
+  show **Summarize with AI** instead.
+
+### 26. Map-reduce for long stories (9 Nov)
+- **Originally:** not designed. On 6 Nov we found 6 stories over the 8,192-token window, the
+  largest 138k tokens.
+- **Now:**
+  - **Chunks:** passages are grouped into chunks that fit the window.
+  - **Map:** each chunk gives up to 4 cited notes, which may only cite their own chunk.
+  - **Reduce:** the notes become the summary.
+  - **Cap:** 12 chunks; longer stories are summarized from their first 12 and marked partial.
+- **Why:** you chose it over truncating or refusing. It keeps citations valid across the whole
+  story and teaches chunking.
+
+### 27. Quotes, repairs, and topics left to the tagger (9 Nov)
+- **Originally (ADR 0002):** the quote per key point was optional, `topics` came from the LLM,
+  and any invalid citation meant `invalid`.
+- **Now:**
+  - **Quotes:** always requested; checked exactly and fuzzily.
+  - **Invalid citations:** removed (repaired). Points left with none are dropped; a summary with
+    none left fails.
+  - **Topics:** stay with the rule-based tagger.
+- **Why:**
+  - Quotes make claims checkable by code, for free.
+  - Rejecting on any bad citation would fail small models constantly; repairs are counted
+    instead.
+  - The tagger already does topics, for free and consistently.
+
+### 28. Four eval layers now, not "later" (9 Nov)
+- **Originally (ADR 0002):** citation validity as the first metric; an LLM judge and faithfulness
+  evals "later in `tests/evals/`".
+- **Now:**
+  1. deterministic checks on every summary
+  2. a golden set you label claim by claim
+  3. an LLM judge whose trust is measured with Cohen's kappa against your labels
+  4. a model comparison report with a decision process
+
+  Explained in `docs/evals-field-guide.md`.
+- **Why:** you wanted to learn the evals vocabulary by building it.
+- **Not built yet:** a dev/test split of the golden set, and evals in CI on recorded outputs.
+
 ---
 
 ## Open questions carried forward
 
-- **Summaries:** which provider for real use (local or paid), and which stories get summarized.
+- **Summaries:** which model to use for real, decided with `oyt eval compare` (field guide,
+  section 8).
+- **Evals:** add a dev/test split of the golden set before tuning prompts.
 - **Broken sources:**
   - Lobsters' feed now returns 404 and needs a new address.
   - Reddit rate-limits r/LocalLLaMA (429), so Reddit requests need spacing out.

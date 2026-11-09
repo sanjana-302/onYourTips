@@ -807,7 +807,7 @@ class Database:
         "article_id content_hash prompt_version provider model tokenizer estimated_input_tokens "
         "estimated_output_tokens estimated_cost_usd real_input_tokens real_output_tokens "
         "real_cost_usd summarization_done description summary_json llm_call_id latency_ms "
-        "created_at"
+        "created_at mode chunks partial calls checks_json trigger"
     ).split()
 
     def save_summary(self, row: dict) -> int:
@@ -828,6 +828,140 @@ class Database:
         sql += " ORDER BY id DESC LIMIT ?"
         args.append(limit)
         return [dict(r) for r in self.conn.execute(sql, args).fetchall()]
+
+    def latest_summary(
+        self,
+        article_id: str,
+        model: str | None = None,
+        prompt_version: str | None = None,
+        done_only: bool = True,
+    ) -> dict | None:
+        """Newest summary attempt for the article's *current* text."""
+        sql = """SELECT s.* FROM summaries s
+                 JOIN article_content c
+                   ON c.id = (SELECT MAX(id) FROM article_content WHERE article_id = s.article_id)
+                  AND c.content_hash = s.content_hash
+                 WHERE s.article_id = ?"""
+        args: list = [article_id]
+        if done_only:
+            sql += " AND s.summarization_done = 'yes'"
+        if model:
+            sql += " AND s.model = ?"
+            args.append(model)
+        if prompt_version:
+            sql += " AND s.prompt_version = ?"
+            args.append(prompt_version)
+        row = self.conn.execute(sql + " ORDER BY s.id DESC LIMIT 1", args).fetchone()
+        return dict(row) if row else None
+
+    def get_summary(self, summary_id: int) -> dict | None:
+        row = self.conn.execute("SELECT * FROM summaries WHERE id=?", (summary_id,)).fetchone()
+        return dict(row) if row else None
+
+    def summary_candidates(
+        self, since: datetime, model: str, prompt_version: str, max_attempts: int
+    ) -> list[str]:
+        """Articles first seen since `since` with usable text and no successful summary for
+        their current text (this model + prompt), with fewer than `max_attempts` failures.
+        Highest signal first."""
+        rows = self.conn.execute(
+            f"""SELECT a.id FROM articles a
+               JOIN article_content c
+                 ON c.id = (SELECT MAX(id) FROM article_content WHERE article_id = a.id)
+               WHERE a.first_seen_at >= ? AND c.status IN ('ok', 'excerpt')
+                 AND c.content_hash IS NOT NULL
+                 AND a.id NOT IN ({_DISMISSED_IDS})
+                 AND NOT EXISTS (SELECT 1 FROM summaries s WHERE s.content_hash = c.content_hash
+                                 AND s.model = ? AND s.prompt_version = ?
+                                 AND s.summarization_done = 'yes')
+                 AND (SELECT COUNT(*) FROM summaries s WHERE s.content_hash = c.content_hash
+                      AND s.model = ? AND s.prompt_version = ?
+                      AND s.summarization_done = 'no') < ?
+               ORDER BY a.signal DESC""",
+            (_iso(since), model, prompt_version, model, prompt_version, max_attempts),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def summaries_since(self, since: datetime, model: str | None = None) -> list[dict]:
+        sql = "SELECT * FROM summaries WHERE created_at >= ?"
+        args: list = [_iso(since)]
+        if model:
+            sql += " AND model = ?"
+            args.append(model)
+        return [dict(r) for r in self.conn.execute(sql + " ORDER BY id", args).fetchall()]
+
+    def max_llm_call_id(self) -> int:
+        return self.conn.execute("SELECT COALESCE(MAX(id), 0) FROM llm_calls").fetchone()[0]
+
+    def llm_calls_after(self, after_id: int, article_id: str, purpose_prefix: str) -> dict:
+        """Totals of ledger rows for one article since a given row: every attempt counts."""
+        row = self.conn.execute(
+            """SELECT COUNT(*), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+                      COALESCE(SUM(cost_usd), 0), COALESCE(SUM(latency_ms), 0)
+               FROM llm_calls WHERE id > ? AND article_id = ? AND purpose LIKE ?""",
+            (after_id, article_id, purpose_prefix + "%"),
+        ).fetchone()
+        keys = ("calls", "input_tokens", "output_tokens", "cost_usd", "latency_ms")
+        return dict(zip(keys, row, strict=True))
+
+    # ------------------------------------------------------------------ evals
+
+    def add_golden(self, article_id: str, bucket: str, note: str | None = None) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO eval_golden (article_id, bucket, added_at, note) "
+                "VALUES (?,?,?,?)",
+                (article_id, bucket, _iso(utcnow()), note),
+            )
+
+    def golden(self) -> list[dict]:
+        return [
+            dict(r)
+            for r in self.conn.execute(
+                "SELECT * FROM eval_golden ORDER BY added_at, article_id"
+            ).fetchall()
+        ]
+
+    def save_judgment(self, row: dict) -> None:
+        cols = (
+            "summary_id point_idx judge verdict reason prompt_version llm_call_id created_at"
+        ).split()
+        with self.conn:
+            self.conn.execute(
+                f"INSERT OR REPLACE INTO claim_judgments ({', '.join(cols)}) "
+                f"VALUES ({', '.join('?' * len(cols))})",
+                [row.get(c) for c in cols],
+            )
+
+    def judgments(
+        self, judge: str | None = None, summary_ids: list[int] | None = None
+    ) -> list[dict]:
+        sql, args = "SELECT * FROM claim_judgments WHERE 1=1", []
+        if judge:
+            sql += " AND judge = ?"
+            args.append(judge)
+        if summary_ids is not None:
+            if not summary_ids:
+                return []
+            sql += f" AND summary_id IN ({','.join('?' * len(summary_ids))})"
+            args += summary_ids
+        return [
+            dict(r)
+            for r in self.conn.execute(sql + " ORDER BY summary_id, point_idx", args).fetchall()
+        ]
+
+    def save_rating(self, summary_id: int, judge: str, usefulness: int, note: str | None) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO summary_ratings VALUES (?,?,?,?,?)",
+                (summary_id, judge, usefulness, note, _iso(utcnow())),
+            )
+
+    def ratings(self, judge: str = "human") -> dict[int, int]:
+        rows = self.conn.execute(
+            "SELECT summary_id, usefulness FROM summary_ratings WHERE judge=?", (judge,)
+        ).fetchall()
+        return {r[0]: r[1] for r in rows}
 
     def get_passages(self, content_hash: str) -> list[Passage]:
         rows = self.conn.execute(

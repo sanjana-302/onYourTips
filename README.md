@@ -95,6 +95,25 @@ uv run oyt tokens calibrate --sample 20 # measure 20 articles with Ollama (one s
 uv run oyt tokens estimate              # recompute all estimates now
 ```
 
+**Summaries with citations** are made every night for every new story (until 08:30), or
+when you tap **Summarize with AI** on a story:
+
+```bash
+uv run oyt summarize 3f9a1c2e           # one story (cached); --plan shows tokens + cost only
+uv run oyt summaries                    # cost: success, tokens, laptop time, projections
+uv run oyt summaries list               # attempts: done yes/no, reason, estimated vs real
+```
+
+**Evals** (see [the field guide](docs/evals-field-guide.md)):
+
+```bash
+uv run oyt eval golden                  # pick ~20 stories
+uv run oyt eval label                   # judge each claim yourself
+uv run oyt eval judge -j qwen3.5:4b     # a second model judges the same claims
+uv run oyt eval agreement -j qwen3.5:4b # can it be trusted? (Cohen's kappa)
+uv run oyt eval compare -m llama3.2:3b -m qwen3.5:4b -j granite4.2:3b
+```
+
 **Full text** is extracted automatically every night. To extract specific stories now:
 
 ```bash
@@ -137,6 +156,8 @@ uv run oyt interests
 - [ADR 0003](docs/adr/0003-llm-cost-ledger.md): LLM gateway and cost ledger
 - [ADR 0004](docs/adr/0004-local-models-first.md): local models first (Ollama)
 - [ADR 0005](docs/adr/0005-daily-refresh-pipeline.md): daily 1 AM refresh, full text for every new story, retries and alerts
+- [ADR 0006](docs/adr/0006-summaries-every-story-and-evals.md): summaries for every story, map-reduce, four eval layers
+- [Evals field guide](docs/evals-field-guide.md): eval jargon, applied to our summaries
 - [AI roadmap](docs/OnYourTips-AI-Roadmap.xlsx): the 13 AI features in learning order, with scaling notes
 
 ## Roadmap
@@ -145,7 +166,7 @@ uv run oyt interests
 2. ✅ Weekly digest, interaction log, scheduled ingest
 3. ✅ LLM gateway + cost ledger + limits + `oyt costs`, local models via Ollama, `oyt llm compare`
 4. ✅ Full-text extraction → numbered passages, nightly for every new story (`oyt nightly`)
-5. ⏳ LLM summaries with citations
+5. ✅ LLM summaries with citations, every story nightly, map-reduce, evals
 6. ✅ FastAPI: `/feed`, `/digest`, `/articles/{id}`, `/interactions`, `/saved`, `/interests`, `/status`, `/ingest`
 7. ✅ Mobile web app v1 (Today, Week, Saved, You, summary-first article view)
 8. ⏳ Evals in CI (citation validity, faithfulness), cost optimizations

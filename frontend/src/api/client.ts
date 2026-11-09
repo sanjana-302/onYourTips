@@ -9,6 +9,7 @@ import type {
   IngestStatus,
   InteractionAction,
   SourceInfo,
+  SummaryView,
   TopicInfo,
   TopicInterest,
 } from "./types";
@@ -75,6 +76,11 @@ export const api = {
   status: () => request<AppStatus>("/status"),
   startIngest: () => request<{ started: boolean }>("/ingest", { method: "POST" }),
   ingestStatus: () => request<IngestStatus>("/ingest"),
+  summary: (id: string) => request<SummaryView>(`/articles/${encodeURIComponent(id)}/summary`),
+  summarize: (id: string, force = false) =>
+    request<SummaryView>(`/articles/${encodeURIComponent(id)}/summarize${query({ force: force ? "true" : undefined })}`, {
+      method: "POST",
+    }),
   alerts: () => request<Alert[]>("/alerts"),
   resolveAlert: (id: number) =>
     request<{ resolved: number }>(`/alerts/${id}/resolve`, { method: "POST" }),

@@ -6,6 +6,7 @@ import { TYPE_NAMES, articleTime, engagementText, hostOf, sourceName } from "../
 import { hrefFor, navigate, type Tab } from "../lib/router";
 import { useAsync } from "../lib/useAsync";
 import { SourceAvatar } from "./Avatar";
+import { SummaryCard } from "./SummaryCard";
 import { ErrorNotice } from "./common";
 import { Icon } from "./Icon";
 
@@ -78,17 +79,7 @@ function ArticleBody({ item }: { item: FeedItem }) {
         <h1 className="article-title">{a.title}</h1>
         {a.author ? <p className="article-author">by {a.author}</p> : null}
 
-        <section className="summary card beige" aria-labelledby="summary-h">
-          <h2 id="summary-h">Summary</h2>
-          {a.summary ? (
-            <p className="summary-text">{a.summary}</p>
-          ) : (
-            <p className="summary-text muted">This source didn't include a description.</p>
-          )}
-          <p className="summary-note">
-            From the source's own description. AI summaries with citations are coming soon.
-          </p>
-        </section>
+        <SummaryCard article={a} />
 
         {a.topics.length ? (
           <div className="pills article-topics" aria-label="Topics">

@@ -4,7 +4,7 @@ import pytest
 
 from onyourtips.core.models import ArticleContent, ContentStatus
 from onyourtips.enrichment.passages import content_hash, normalize_text, split_passages
-from onyourtips.enrichment.summary_prompt import SUMMARY_SYSTEM
+from onyourtips.enrichment.summary_prompt import SUMMARY_PROMPT_VERSION, SUMMARY_SYSTEM
 from onyourtips.enrichment.tokens import estimate_tokens, percentile
 from onyourtips.llm import LLMGateway
 from onyourtips.llm.models import ProviderResponse, Usage
@@ -86,7 +86,7 @@ def test_estimates_and_report(corpus):
     assert k == {"estimated": 4, "tokenizer": "ratio:4.00", "calibration_samples": 0}
     assert svc.estimate_articles(settings, db)["estimated"] == 4  # re-running replaces rows
 
-    rows = {r["article_id"]: r for r in db.token_counts("m1", "summary-draft-1", "estimate")}
+    rows = {r["article_id"]: r for r in db.token_counts("m1", SUMMARY_PROMPT_VERSION, "estimate")}
     assert len(rows) == 4
     mid = rows[ids["mid"]]
     assert mid["system_chars"] == len(SUMMARY_SYSTEM)
@@ -199,7 +199,7 @@ def test_hf_counter_is_used_when_available(corpus, monkeypatch):
     assert k["tokenizer"] == "hf:unsloth/Llama-3.2-3B-Instruct"
     row = next(
         r
-        for r in db.token_counts("llama3.2:3b", "summary-draft-1", "estimate")
+        for r in db.token_counts("llama3.2:3b", SUMMARY_PROMPT_VERSION, "estimate")
         if r["article_id"] == ids["mid"]
     )
     assert row["system_tokens"] == len(SUMMARY_SYSTEM.split())
@@ -245,10 +245,13 @@ def test_summary_plan_and_records(corpus, tmp_path):
     # failure after the call reached the model (e.g. invalid JSON): done = no, reason kept
     record_summary(db, plan, error="invalid: key_points missing citations")
 
-    # too long: caught before sending
+    # too long for one pass: planned as map-reduce, every chunk inside the context window
     huge = plan_summary(settings, db, ids["huge"])
-    assert not huge.fits and huge.reason.startswith("too long:")
-    record_summary(db, huge, error=huge.reason)
+    assert huge.fits and huge.mode == "map_reduce" and len(huge.chunks) >= 2
+    assert huge.estimated_output_tokens == len(huge.chunks) * 300 + 400
+    assert sorted(i for c in huge.chunks for i in c) == list(
+        range(1, len([i for c in huge.chunks for i in c]) + 1)
+    )  # every passage once, in order
 
     rows = list_summaries(db)
     by_desc = {r["description"]: r for r in rows}
@@ -260,9 +263,6 @@ def test_summary_plan_and_records(corpus, tmp_path):
     assert ok["summary_json"] == '{"tldr": "x"}'
     bad = by_desc["invalid: key_points missing citations"]
     assert bad["summarization_done"] == "no" and bad["summary_json"] is None
-    too_long = next(r for r in rows if r["article_id"] == ids["huge"])
-    assert too_long["summarization_done"] == "no" and too_long["llm_call_id"] is None
-    assert "context window" in too_long["description"]
     assert len(list_summaries(db, ids["mid"][:8])) == 2
 
 

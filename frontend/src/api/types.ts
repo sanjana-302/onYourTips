@@ -124,3 +124,34 @@ export interface IngestStatus {
   extracted: number | null;
   error: string | null;
 }
+
+export interface KeyPoint {
+  text: string;
+  citations: number[];
+  quote: string;
+}
+
+export interface CitedPassage {
+  idx: number;
+  text: string;
+}
+
+export interface SummaryView {
+  article_id: string;
+  status: "ready" | "missing" | "failed";
+  summary_id: number | null;
+  tldr: string | null;
+  key_points: KeyPoint[];
+  why_it_matters: string | null;
+  passages: CitedPassage[];
+  model: string | null;
+  mode: "single" | "map_reduce" | null;
+  partial: boolean;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cost_usd: number | null;
+  latency_ms: number | null;
+  quote_match_rate: number | null;
+  created_at: string | null;
+  description: string | null;
+}

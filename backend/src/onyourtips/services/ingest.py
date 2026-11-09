@@ -79,4 +79,6 @@ class IngestRunner:
         from onyourtips.storage import Database
 
         with Database(self.settings.db_path) as db:
-            return run_nightly(self.settings, db, trigger="manual")
+            # The app's Refresh button shouldn't spin for an hour: summaries happen at night,
+            # or on demand when a story is opened.
+            return run_nightly(self.settings, db, trigger="manual", summarize=False)

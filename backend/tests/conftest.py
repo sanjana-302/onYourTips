@@ -21,6 +21,7 @@ def settings(tmp_path: Path) -> Settings:
         http_retries=1,
         http_backoff=0,
         max_age_days=36500,
+        summary_nightly=False,  # nightly tests opt in, with a fake model
         _env_file=None,
     )
 

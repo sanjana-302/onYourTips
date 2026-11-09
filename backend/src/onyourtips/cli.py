@@ -48,6 +48,11 @@ def _db() -> Database:
     return Database(get_settings().db_path)
 
 
+def _db_open() -> Database:
+    """For one-shot commands: the connection closes when the process exits."""
+    return Database(get_settings().db_path)
+
+
 def _print_item(n: int, item: FeedItem) -> None:
     a, st = item.article, item.state
     marks = ("★ " if st.saved else "") + (f"[{st.rating}/5] " if st.rating else "")
@@ -384,14 +389,18 @@ def stats() -> None:
 @app.command()
 def nightly(
     trigger: Annotated[str, typer.Option(help="scheduled (1 AM job) or manual")] = "scheduled",
+    summaries: Annotated[
+        bool | None,
+        typer.Option("--summaries/--no-summaries", help="Summarize new stories (default: on)"),
+    ] = None,
 ) -> None:
-    """Run the daily refresh: ingest → extract full text → retry → retag → alerts."""
+    """Run the daily refresh: ingest → extract → retag → alerts → summaries until 08:30."""
     from onyourtips.services.nightly import next_refresh_at, run_nightly
 
     s = get_settings()
     with _db() as db:
-        with console.status("Refreshing: ingest, extract, retag…"):
-            r = run_nightly(s, db, trigger=trigger)
+        with console.status("Refreshing: ingest, extract, retag, summarize…"):
+            r = run_nightly(s, db, trigger=trigger, summarize=summaries)
     color = {"ok": "green", "partial": "yellow", "failed": "red", "skipped": "yellow"}.get(
         r.status, "white"
     )
@@ -424,6 +433,17 @@ def nightly(
         console.print(
             f"Tokens:  {k['estimated']} summary-size counts ({_tokenizer_label(k['tokenizer'])})"
         )
+    if r.summaries:
+        m = r.summaries
+        if m.get("skipped"):
+            console.print(f"Summary: skipped, {m['skipped']}")
+        else:
+            console.print(
+                f"Summary: {m['candidates']} to do → {m['done']} done "
+                f"({m['map_reduce']} map-reduce), {m['failed']} failed, "
+                f"{m['not_reached']} not reached by {m['deadline']}; {m.get('minutes', 0)} min "
+                f"with {m['model']}"
+            )
     for a in r.new_alerts:
         console.print(f"[yellow]Alert:[/] {a.message}")
     console.print(f"[dim]Next scheduled refresh: {next_refresh_at(s):%a %d %b, %H:%M}[/]")
@@ -656,6 +676,324 @@ def _tokenizer_label(name: str) -> str:
     if name.startswith("ratio:"):
         return f"estimate: {name[6:]} chars/token"
     return name
+
+
+# ------------------------------------------------------------------ summaries
+
+
+def _print_summary(view) -> None:
+    if view.status != "ready":
+        msg = view.description or "not summarized yet (oyt summarize <id>)"
+        console.print(f"[yellow]{view.status}:[/] {msg}")
+        return
+    console.print(f"[bold]{view.tldr}[/]")
+    for i, kp in enumerate(view.key_points, 1):
+        cites = " ".join(f"[P{c}]" for c in kp.citations)
+        console.print(f" {i}. {kp.text} [cyan]{cites}[/]")
+        if kp.quote:
+            console.print(f"    [dim]“{kp.quote}”[/]")
+    if view.why_it_matters:
+        console.print(f"[italic]Why it matters:[/] {view.why_it_matters}")
+    meta = [view.model or "", view.mode or ""]
+    if view.partial:
+        meta.append("partial (first parts only)")
+    if view.input_tokens is not None:
+        meta.append(f"{view.input_tokens:,} in / {view.output_tokens:,} out")
+    if view.cost_usd is not None:
+        meta.append(f"${view.cost_usd:.4f}")
+    if view.latency_ms:
+        meta.append(f"{view.latency_ms / 1000:.1f}s")
+    if view.quote_match_rate is not None:
+        meta.append(f"quotes found {view.quote_match_rate:.0%}")
+    console.print(f"[dim]{' · '.join(m for m in meta if m)}[/]")
+
+
+@app.command()
+def summarize(
+    article_id: Annotated[str, typer.Argument(help="Article id (prefix ok)")],
+    model: Annotated[str | None, typer.Option("-m", "--model")] = None,
+    force: Annotated[bool, typer.Option(help="Summarize again even if cached")] = False,
+    plan: Annotated[
+        bool, typer.Option(help="Only show tokens, cost and mode; no model call")
+    ] = False,
+) -> None:
+    """Summarize one story with citations (cached per text + prompt + model)."""
+    from onyourtips.services.summaries import get_summary_view, plan_summary, summarize_article
+
+    s = get_settings() if model is None else get_settings().model_copy(update={"llm_model": model})
+    with _db() as db:
+        if plan:
+            p = plan_summary(s, db, article_id)
+            console.print(
+                f"{p.title}\nmode {p.mode}"
+                + (f" ({len(p.chunks)} of {p.total_chunks} chunks)" if p.chunks else "")
+                + f" · ≈{p.estimated_input_tokens:,} in / {p.estimated_output_tokens:,} out"
+                f" · ≈${p.estimated_cost_usd:.4f} · {p.tokenizer}"
+                + (f"\n[yellow]{p.reason}" if p.reason else "")
+            )
+            return
+        with console.status(f"Summarizing with {s.llm_model}…"):
+            out = summarize_article(s, db, article_id, force=force)
+        if out.cached:
+            console.print("[dim](cached)[/]")
+        _print_summary(get_summary_view(s, db, out.article_id))
+
+
+summaries_app = typer.Typer(help="Summary attempts: cost report, list, show.")
+app.add_typer(summaries_app, name="summaries")
+
+
+@summaries_app.callback(invoke_without_command=True)
+def summaries_report_cmd(
+    ctx: typer.Context,
+    days: Annotated[int, typer.Option(help="Attempts in the last N days")] = 1,
+    model: Annotated[str | None, typer.Option("-m", "--model")] = None,
+) -> None:
+    """What summarizing cost: success, tokens, laptop time, estimate accuracy, projections."""
+    if ctx.invoked_subcommand:
+        return
+    from onyourtips.services.summaries import summary_report
+
+    r = summary_report(get_settings(), _db_open(), days=days, model=model)
+    if not r.attempts:
+        console.print(f"No summary attempts in the last {days} day(s).")
+        return
+    t = Table("", "", show_header=False, title=f"Summaries, last {days} day(s)")
+    t.add_row("Attempts", f"{r.attempts}: [green]{r.done} done[/], [red]{r.failed} failed[/]")
+    for reason, n in r.failure_reasons.items():
+        t.add_row("", f"[dim]{n} × {reason}[/]")
+    t.add_row("How", f"{r.single} single pass, {r.map_reduce} map-reduce ({r.partial} partial)")
+    t.add_row("Model calls", f"{r.calls} (incl. map steps and retries)")
+    t.add_row(
+        "Tokens",
+        f"{r.input_tokens:,} in / {r.output_tokens:,} out "
+        f"(avg {r.avg_input_tokens:,} / {r.avg_output_tokens:,} per summary)",
+    )
+    t.add_row(
+        "Laptop time",
+        f"{r.laptop_minutes} min busy; {r.avg_seconds}s per summary"
+        + (f"; {r.tokens_per_sec} tokens/s" if r.tokens_per_sec else ""),
+    )
+    t.add_row("Real cost", f"${r.real_cost_usd:.4f}")
+    if r.estimate_error_pct is not None:
+        t.add_row("Estimate accuracy", f"input tokens off by {r.estimate_error_pct}% on average")
+    if r.avg_quote_match is not None:
+        t.add_row(
+            "Checks",
+            f"quotes found {r.avg_quote_match:.0%}, coverage "
+            f"{(r.avg_coverage or 0):.0%}, {r.repaired} with invalid citations removed",
+        )
+    console.print(t)
+    if r.projections:
+        pt = Table(
+            "provider",
+            "model",
+            "these summaries",
+            "per summary",
+            "per month",
+            title="Same tokens on paid models",
+        )
+        for p in r.projections:
+            pt.add_row(
+                p.provider,
+                p.model,
+                f"${p.total_usd:.3f}",
+                f"${p.per_summary_usd:.5f}",
+                f"${p.per_month_usd:.2f}",
+            )
+        console.print(pt)
+    else:
+        console.print("[dim]Add paid models to config/pricing.yaml to see what this would cost.")
+
+
+@summaries_app.command("list")
+def summaries_list_cmd(
+    article_id: Annotated[str | None, typer.Argument()] = None,
+    limit: Annotated[int, typer.Option()] = 20,
+) -> None:
+    """Recent attempts: done yes/no, reason, estimated vs real tokens."""
+    from onyourtips.services.summaries import list_summaries
+
+    t = Table("id", "article", "model", "mode", "done", "est in", "real in", "out", "s", "reason")
+    for r in list_summaries(_db_open(), article_id, limit):
+        t.add_row(
+            str(r["id"]),
+            r["article_id"][:8],
+            r["model"],
+            r["mode"] or "",
+            "[green]yes" if r["summarization_done"] == "yes" else "[red]no",
+            f"{r['estimated_input_tokens']:,}",
+            f"{r['real_input_tokens'] or 0:,}",
+            f"{r['real_output_tokens'] or 0:,}",
+            f"{(r['latency_ms'] or 0) / 1000:.1f}",
+            (r["description"] or "")[:50],
+        )
+    console.print(t)
+
+
+@summaries_app.command("show")
+def summaries_show_cmd(article_id: Annotated[str, typer.Argument()]) -> None:
+    """Show a story's summary with its citations."""
+    from onyourtips.services.summaries import get_summary_view
+
+    _print_summary(get_summary_view(get_settings(), _db_open(), article_id))
+
+
+# ------------------------------------------------------------------ evals
+
+eval_app = typer.Typer(help="Evals: golden set, your labels, LLM judge, agreement, compare.")
+app.add_typer(eval_app, name="eval")
+
+
+@eval_app.command("golden")
+def eval_golden_cmd(
+    n: Annotated[int, typer.Option(help="Stories to add")] = 20,
+    show: Annotated[bool, typer.Option(help="Only list the current set")] = False,
+) -> None:
+    """Pick a stratified golden set: short, medium and long (map-reduce) stories."""
+    from onyourtips.services import evals
+
+    s, db = get_settings(), _db_open()
+    if not show:
+        added = evals.pick_golden(s, db, n)
+        console.print(f"Added {len(added)} stories to the golden set.")
+    t = Table("article", "bucket", "title")
+    for g in db.golden():
+        a = db.get_article(g["article_id"])
+        t.add_row(g["article_id"][:8], g["bucket"], (a.title if a else "")[:70])
+    console.print(t)
+    console.print("[dim]Next: oyt eval label (summarizes them first if needed)")
+
+
+@eval_app.command("label")
+def eval_label_cmd(
+    model: Annotated[str | None, typer.Option("-m", "--model")] = None,
+) -> None:
+    """Judge golden claims yourself: s = supported, p = partial, u = unsupported."""
+    from rich.prompt import IntPrompt, Prompt
+
+    from onyourtips.services import evals
+
+    s = get_settings() if model is None else get_settings().model_copy(update={"llm_model": model})
+    db = _db_open()
+    with console.status("Making sure every golden story has a summary…"):
+        evals.golden_summaries(s, db)
+    queue = evals.label_queue(s, db)
+    if not queue:
+        console.print("Nothing to label. Add stories with `oyt eval golden`.")
+        return
+    console.print(f"{len(queue)} claims to label. Ctrl-C to stop; progress is saved.\n")
+    keys = {"s": "supported", "p": "partial", "u": "unsupported"}
+    last_summary = None
+    for i, item in enumerate(queue, 1):
+        if item.summary_id != last_summary:
+            if last_summary is not None:
+                use = IntPrompt.ask("Whole summary: how useful, 1–5", choices=list("12345"))
+                db.save_rating(last_summary, evals.HUMAN, use, None)
+            console.rule(item.title[:80])
+            last_summary = item.summary_id
+        console.print(f"[bold]Claim {item.point_idx}:[/] {item.claim}")
+        if item.quote:
+            console.print(f"[dim]quote: “{item.quote}”[/]")
+        for idx, text in item.passages.items():
+            console.print(f"[cyan][P{idx}][/] {text}")
+        k = Prompt.ask(f"[{i}/{len(queue)}] supported / partial / unsupported", choices=list("spu"))
+        note = Prompt.ask("note (optional)", default="") or None
+        evals.save_label(db, item, keys[k], note)
+        console.print()
+    if last_summary is not None:
+        use = IntPrompt.ask("Whole summary: how useful, 1–5", choices=list("12345"))
+        db.save_rating(last_summary, evals.HUMAN, use, None)
+    console.print("[green]Done.[/] Next: oyt eval judge --judge <another model>")
+
+
+@eval_app.command("judge")
+def eval_judge_cmd(
+    judge: Annotated[str, typer.Option("--judge", "-j", help="Judge model (not the summarizer)")],
+    model: Annotated[str | None, typer.Option("-m", "--model", help="Whose summaries")] = None,
+    recent: Annotated[int, typer.Option(help="Also judge N recent non-golden summaries")] = 0,
+) -> None:
+    """LLM-as-judge: verdict + reason per claim, against its cited passages."""
+    from onyourtips.services import evals
+
+    s = get_settings()
+    model = model or s.llm_model
+    db = _db_open()
+    rows = evals.golden_summaries(s, db, model, create=False)
+    if recent:
+        seen = {r["id"] for r in rows}
+        rows += [r for r in evals.judge_rows_for_window(db, model, recent) if r["id"] not in seen]
+    with console.status(f"{judge} is judging {len(rows)} summaries…"):
+        run = evals.judge_summaries(s, db, judge, rows)
+    if run.self_judging:
+        console.print("[yellow]The judge is also the summarizer: expect it to favour itself.")
+    console.print(
+        f"Judged {run.judged} claims ({run.skipped_existing} already judged, {run.errors} errors)."
+    )
+    f, n = evals.faithfulness(db, judge, [r["id"] for r in rows])
+    if f is not None:
+        console.print(f"Faithfulness according to {judge}: [bold]{f:.0%}[/] of {n} claims")
+    console.print("[dim]Next: oyt eval agreement --judge " + judge)
+
+
+@eval_app.command("agreement")
+def eval_agreement_cmd(
+    judge: Annotated[str, typer.Option("--judge", "-j")],
+) -> None:
+    """How well the LLM judge agrees with your labels (accuracy, Cohen's kappa, confusion)."""
+    from onyourtips.services import evals
+
+    a = evals.agreement(_db_open(), judge)
+    if not a.n:
+        console.print("No claims judged by both you and this judge yet.")
+        return
+    console.print(
+        f"{judge} vs you on {a.n} claims: accuracy {a.accuracy:.0%}, "
+        f"Cohen's kappa [bold]{a.kappa}[/]"
+    )
+    t = Table("you \\ judge", *evals.VERDICTS)
+    for r in evals.VERDICTS:
+        t.add_row(r, *(str(a.confusion[r][j]) for j in evals.VERDICTS))
+    console.print(t)
+    if a.unsupported_recall is not None:
+        console.print(f"It caught {a.unsupported_recall:.0%} of the claims you marked unsupported.")
+    verdict = (
+        "trust it for screening"
+        if (a.kappa or 0) >= 0.6
+        else "use with care"
+        if (a.kappa or 0) >= 0.4
+        else "don't rely on it yet"
+    )
+    console.print(f"[dim]kappa ≥ 0.6 substantial · 0.4–0.6 moderate · < 0.4 weak → {verdict}")
+
+
+@eval_app.command("compare")
+def eval_compare_cmd(
+    models: Annotated[list[str], typer.Option("-m", "--model", help="Repeat for each model")],
+    judge: Annotated[str | None, typer.Option("--judge", "-j")] = None,
+) -> None:
+    """Summarize the golden set with each model and score them; writes a markdown report."""
+    from onyourtips.services import evals
+
+    s, db = get_settings(), _db_open()
+    scores = []
+    for m in models:
+        with console.status(f"{m}: summarizing and scoring the golden set…"):
+            scores.append(evals.score_model(s.model_copy(update={"llm_model": m}), db, m, judge))
+    agr = evals.agreement(db, judge) if judge else None
+    path = evals.write_compare_report(scores, judge, agr, s.db_path.parent / "evals")
+    t = Table("model", "summarized", "faithful (judge)", "faithful (you)", "quotes", "avg s")
+    for sc in scores:
+        t.add_row(
+            sc.model,
+            f"{sc.summarized}/{sc.stories}",
+            f"{sc.faithfulness_judge:.0%}" if sc.faithfulness_judge is not None else "–",
+            f"{sc.faithfulness_human:.0%}" if sc.faithfulness_human is not None else "–",
+            f"{sc.quote_match:.0%}" if sc.quote_match is not None else "–",
+            str(sc.avg_seconds or "–"),
+        )
+    console.print(t)
+    console.print(f"Report: {path}")
 
 
 tokens_app = typer.Typer(help="How many tokens a summary of each article would use.")

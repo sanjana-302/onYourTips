@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     # Token counting for summaries (services/tokens.py): expected summary length, and how many
     # articles `oyt tokens calibrate` measures by default.
     summary_output_tokens: int = 400
+    # Summaries (services/summaries.py, ADR 0006)
+    summary_map_output_tokens: int = 300  # per chunk note set in map-reduce
+    summary_max_chunks: int = 12  # longer articles: first 12 chunks, marked partial
+    summary_nightly: bool = True  # summarize every new story in the nightly run
+    summary_deadline: str = "08:30"  # local time: stop summarizing so the morning is ready
+    summary_max_attempts: int = 2  # failed attempts per story before giving up
     tokenizers_file: Path = BACKEND_DIR / "config" / "tokenizers.yaml"
     token_calibration_sample: int = 20
 

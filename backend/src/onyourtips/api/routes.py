@@ -1,5 +1,6 @@
 """HTTP routes. Each handler parses input, calls one service, and returns a response model."""
 
+import threading
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,6 +14,7 @@ from onyourtips.core.utils import utcnow
 from onyourtips.ingestion.tagging import Tagger
 from onyourtips.services import IngestRunner, nightly
 from onyourtips.services.llm import CostSummary, LLMStatus, cost_summary, llm_status
+from onyourtips.services.summaries import SummaryView, get_summary_view, summarize_article
 from onyourtips.services.tokens import TokenReport, token_report
 from onyourtips.storage import Database
 
@@ -100,6 +102,36 @@ def article_content(article_id: str, db: DB) -> services.ContentView:
     if view is None:
         raise HTTPException(status_code=404, detail="not extracted yet; POST to /extract")
     return view
+
+
+@router.get("/articles/{article_id}/summary", response_model=SummaryView)
+def article_summary(article_id: str, settings: Cfg) -> SummaryView:
+    """The story's AI summary with citations: ready, missing, or failed (with the reason)."""
+    with Database(settings.db_path) as db:
+        try:
+            return get_summary_view(settings, db, article_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="article not found") from exc
+
+
+_summarize_lock = threading.Lock()
+
+
+@router.post("/articles/{article_id}/summarize", response_model=SummaryView)
+def summarize(article_id: str, settings: Cfg, force: bool = False) -> SummaryView:
+    """Summarize now (about 5–30 s with a local model). One at a time: the model runs one
+    request at a time anyway. Runs in FastAPI's thread pool, with its own connection."""
+    if not _summarize_lock.acquire(timeout=120):
+        raise HTTPException(status_code=409, detail="another summary is running; try again")
+    try:
+        with Database(settings.db_path) as db:
+            try:
+                out = summarize_article(settings, db, article_id, force=force)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail="article not found") from exc
+            return get_summary_view(settings, db, out.article_id)
+    finally:
+        _summarize_lock.release()
 
 
 @router.post("/articles/{article_id}/extract", response_model=services.ContentView)

@@ -44,6 +44,7 @@ reports progress, which the app polls.
      tokens    estimate a summary's input tokens per article (chars ÷ chars-per-token, no model)
   4. alerts    source failing 2 runs in a row · pages given up on (per website) · pipeline crashed
                → alerts table, You tab "Needs attention", macOS notification; source alerts auto-resolve
+  4b. summarize every new story with citations, best first, until 08:30 (ADR 0006)
   5. record    pipeline_runs row: trigger, status (ok | partial | failed | skipped), per-step counts
 ```
 
@@ -82,6 +83,25 @@ feature code ──► services ──► LLMGateway.complete(request, schema?)
   `plan_summary` builds the prompt, counts tokens, estimates cost and checks it fits the context
   window, with no model call. `record_summary` writes one row per attempt: estimated vs real
   tokens and cost, `summarization_done` yes/no, and `description` with the reason when it's no.
+
+## Summaries with citations and evals (ADR 0006)
+
+```
+plan_summary ─► fits 8,192? ── yes ─► one call (summary-v1) ─────────────┐
+     │ tokens, cost estimate    no ─► chunks ─► map × N ─► reduce ───────┤
+     ▼                                                                   ▼
+check_summary: repair invalid citations · gate (≥1 cited point) · metrics (quotes, coverage)
+     ▼
+summaries row: done yes/no + reason · estimated vs real tokens/cost (sum of ledger rows)
+```
+
+- `services/summaries.py`: `plan_summary`, `summarize_article`, `get_summary_view`,
+  `summary_report`
+- `services/evals.py`: golden set, labels, LLM judge, agreement (Cohen's kappa), comparison report
+- Tables: `summaries`, `eval_golden`, `claim_judgments`, `summary_ratings` (migration 0009)
+- API: `GET /api/articles/{id}/summary`, `POST /api/articles/{id}/summarize`. In the app,
+  citation chips open the passage with the quote highlighted.
+- Guide to the terms: [evals field guide](evals-field-guide.md).
 
 ## Full-text extraction
 
