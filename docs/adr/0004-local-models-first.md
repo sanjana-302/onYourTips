@@ -6,7 +6,7 @@
 ## Context
 
 OnYourTips is a learning project. The plan is to build the AI features one at a time
-(see `docs/OnYourTips-AI-Roadmap.xlsx`) and to see how models differ and improve, not only
+(see the roadmap in the README) and to see how models differ and improve, not only
 to ship features. Paid APIs cost money for every experiment, and they hide much of what
 happens (load time, generation speed, context limits).
 

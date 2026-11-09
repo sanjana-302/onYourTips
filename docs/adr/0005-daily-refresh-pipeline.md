@@ -79,7 +79,7 @@ upgrade is roadmap feature #6 ("smarter topic tagging" with embeddings).
 
 Extraction cost grows with **articles, not users**: every user shares the same corpus. At 1,000 or
 1,000,000 users it's still ~500 fetches a night for these sources. More sources mean a job queue
-with workers and per-domain rate limits (see the roadmap's scaling columns).
+with workers and per-domain rate limits.
 
 ## Alternatives considered
 

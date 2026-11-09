@@ -209,7 +209,7 @@ A process for deciding, using the comparison report (`data/evals/summary-compare
    15 s vs 5 s is 2 hours vs 40 minutes.
 4. **Check cost and the deadline.** Projected laptop time must fit before 08:30. If a paid model
    is in the running, compare its monthly projection with the quality gain.
-5. **Write it down.** Record the decision, the numbers and the date in the design log book, so
+5. **Write it down.** Record the decision, the numbers and the date (an ADR works well), so
    the next change has a baseline.
 
 ## Where everything lives

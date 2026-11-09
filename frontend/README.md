@@ -8,11 +8,11 @@ your phone's home screen.
 
 | Tab | What it shows | API |
 |---|---|---|
-| Today | Recency-ranked feed, type and topic filters, refresh sources | `GET /api/feed`, `/api/topics`, `POST /api/ingest` |
-| Week | Best of the last 7 days, grouped by type | `GET /api/digest` |
+| Today | Recency-ranked feed, search, type and topic filters, last/next refresh | `GET /api/feed`, `/api/topics`, `/api/status`, `POST /api/ingest` |
+| Week | Top 3 podium, then the best of the last 7 days grouped by type | `GET /api/digest` |
 | Saved | Your reading list | `GET /api/saved` |
-| You | Interest profile, collection stats, failing sources | `GET /api/interests`, `/api/status` |
-| Article (overlay) | Summary first, topics, every source + discussion, rate, save, hide | `GET /api/articles/{id}`, `POST …/interactions` |
+| You | "Needs attention" alerts, interest profile, collection stats | `GET /api/alerts`, `/api/interests`, `/api/status` |
+| Article (overlay) | AI summary with tappable citations (or "Summarize with AI"), topics, every source + discussion, rate, save, hide | `GET /api/articles/{id}`, `GET`/`POST …/summary`, `…/summarize`, `POST …/interactions` |
 
 ## Commands
 
@@ -30,9 +30,9 @@ src/
   api/          types.ts (mirrors backend models) · client.ts (typed fetch wrapper)
   lib/          AppContext (source names, topic labels, optimistic interaction state, toasts)
                 router.ts (hash routes: #/, #/week, #/saved, #/you, #/a/<id>) · format.ts · useAsync.ts
-  components/   ItemRow (feed row with heat strip) · ArticleView · RefreshButton · common
+  components/   ItemRow (feed row) · ArticleView · SummaryCard (citations) · RefreshButton · common
   pages/        TodayPage · WeekPage · SavedPage · YouPage
-  styles.css    design tokens + all styles (light and dark)
+  styles.css    design tokens + all styles (light only)
 ```
 
 ## Design notes
@@ -41,7 +41,7 @@ src/
 dark violet `#504E76` (secondary text, toasts), light beige `#FDF8E2` (highlight cards),
 calm green `#A3B565` (tab bar, success, projects), light orange `#FCDD9D` (selected states,
 primary buttons), saturated orange `#F1642E` (Hot badge, stars). Text and outlines use a deep ink
-derived from the dark violet. Dark mode keeps the pastels on a deep-violet background.
+derived from the dark violet.
 All colours are tokens at the top of `styles.css`.
 
 **Style:** Poppins throughout; outlined cards with large radii and soft shadows; bottom sheets

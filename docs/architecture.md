@@ -187,5 +187,8 @@ planned weekend-project recommender.
 
 ## Storage and migrations
 
+Every table and column is described in the [data dictionary](data-dictionary.md) (a test keeps
+it in sync with the migrations).
+
 SQLite at `backend/data/onyourtips.db`. Schema changes are numbered SQL files in
 `storage/migrations/`, applied automatically when the database is opened (`PRAGMA user_version`).

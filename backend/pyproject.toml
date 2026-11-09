@@ -1,9 +1,19 @@
 [project]
 name = "onyourtips"
 version = "0.1.0"
-description = "Daily ingestion of AI advancements, software news and cool projects."
+description = "Self-hosted morning briefing on AI and software, summarized by a local LLM with citations."
 readme = "README.md"
 requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "sanjana-302" }]
+keywords = ["llm", "rss", "news", "summarization", "evals", "ollama", "fastapi"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "httpx>=0.27",
     "pydantic>=2.6",
@@ -19,6 +29,11 @@ dependencies = [
     "trafilatura>=2.0",
     "tokenizers>=0.21",  # Hugging Face: exact token counts for local models, no model call
 ]
+
+[project.urls]
+Homepage = "https://github.com/sanjana-302/onYourTips"
+Documentation = "https://github.com/sanjana-302/onYourTips/tree/main/docs"
+Issues = "https://github.com/sanjana-302/onYourTips/issues"
 
 [project.scripts]
 oyt = "onyourtips.cli:app"
